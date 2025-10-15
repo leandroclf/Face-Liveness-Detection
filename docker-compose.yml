@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  face-liveness-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: face-liveness-container
+    platform: linux/amd64
+    ports:
+      - "8000:8000"  # Flask API
+      - "7860:7860"  # Gradio Interface
+    environment:
+      - LICENSE_KEY=${LICENSE_KEY:-demo_key}
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=8000
+      - GRADIO_HOST=0.0.0.0
+      - GRADIO_PORT=7860
+      - TZ=America/Sao_Paulo
+    volumes:
+      - .:/workspace
+      - ./openvino:/app/openvino
+      - ./facewrapper:/app/facewrapper
+      - ./gradio:/app/gradio
+    working_dir: /app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - face-liveness-network
+
+networks:
+  face-liveness-network:
+    driver: bridge
+    name: face-liveness-network
+
+volumes:
+  openvino-models:
+    driver: local
+  gradio-cache:
+    driver: local
