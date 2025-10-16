@@ -143,6 +143,7 @@ class PrerequisiteChecker:
             'numpy',
             'opencv-python',
             'flask',
+            'flask-restx',
             'gradio',
             'pillow'
         ]

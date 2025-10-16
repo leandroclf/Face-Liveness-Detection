@@ -173,6 +173,7 @@ LD_LIBRARY_PATH=/caminho/para/openvino:/caminho/para/facewrapper/libs:$LD_LIBRAR
 - **URL**: http://localhost:8000
 - **Health Check**: http://localhost:8000/health
 - **Endpoint Principal**: http://localhost:8000/api/liveness
+- **Documentação Swagger**: http://localhost:8000/docs
 
 ### 🎨 Interface Gradio
 - **URL**: http://localhost:7860

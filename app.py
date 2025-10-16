@@ -2,12 +2,16 @@ import sys
 sys.path.append('.')
 
 from flask import Flask, request, jsonify
+from flask_restx import Api, Resource, fields
+from flask_restx import reqparse
 from time import gmtime, strftime
 import os
 import base64
+import binascii
 import json
 import cv2
 import numpy as np
+from werkzeug.datastructures import FileStorage
 
 # Importações com validação rigorosa
 try:
@@ -137,93 +141,220 @@ except Exception as e:
     print("🚫 Aplicação não pode continuar")
     sys.exit(1)
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """
-    Endpoint de verificação de saúde para Docker healthcheck
-    """
-    return jsonify({
-        "status": "healthy",
-        "service": "Face Liveness Detection API",
-        "version": version.decode('utf-8') if version else "unknown",
-        "mode": "REAL_VALIDATION",
-        "mock_disabled": True,
-        "timestamp": strftime("%Y-%m-%d %H:%M:%S", gmtime()),
-        "endpoints": {
-            "liveness": "/api/liveness",
-            "liveness_base64": "/api/liveness_base64"
-        },
-        "requirements": {
-            "native_library": "libttvfaceengine7.so",
-            "license_required": True,
-            "models_directory": "facewrapper/dict"
+LIB_VERSION = version.decode('utf-8') if version else "unknown"
+
+def evaluate_liveness(image: np.ndarray) -> dict:
+    """Executa a avaliação de vivacidade usando o motor nativo."""
+    face_rect = np.zeros([4], dtype=np.int32)
+    liveness_score = np.zeros([1], dtype=np.double)
+    angles = np.zeros([3], dtype=np.double)
+
+    ret = ttv_detect_face(
+        image,
+        image.shape[1],
+        image.shape[0],
+        face_rect,
+        liveness_score,
+        angles
+    )
+
+    if ret == -1:
+        result = "license error!"
+    elif ret == -2:
+        result = "init error!"
+    elif ret == 0:
+        result = "no face detected!"
+    elif ret > 1:
+        result = "multiple face detected!"
+    elif (
+        face_rect[0] < 0
+        or face_rect[1] < 0
+        or face_rect[2] >= image.shape[1]
+        or face_rect[2] >= image.shape[0]
+    ):
+        result = "face is in boundary!"
+    elif liveness_score[0] > 0.5:
+        result = "genuine"
+    else:
+        result = "spoof"
+
+    return {
+        "status": "ok",
+        "data": {
+            "result": result,
+            "face_rect": {
+                "x": int(face_rect[0]),
+                "y": int(face_rect[1]),
+                "w": int(face_rect[2] - face_rect[0] + 1),
+                "h": int(face_rect[3] - face_rect[1] + 1)
+            },
+            "liveness_score": float(liveness_score[0]),
+            "angles": {
+                "yaw": float(angles[0]),
+                "roll": float(angles[1]),
+                "pitch": float(angles[2])
+            }
         }
-    }), 200
+    }
 
-@app.route('/api/liveness', methods=['POST'])
-def check_liveness():
-  file = request.files['image']
-  image = cv2.imdecode(np.fromstring(file.read(), np.uint8), cv2.IMREAD_COLOR)
-  
-  faceRect = np.zeros([4], dtype=np.int32)
-  livenessScore = np.zeros([1], dtype=np.double)
-  angles = np.zeros([3], dtype=np.double)
-  ret = ttv_detect_face(image, image.shape[1], image.shape[0], faceRect, livenessScore, angles)
-  if ret == -1:
-      result = "license error!"
-  elif ret == -2:
-      result = "init error!"
-  elif ret == 0:
-      result = "no face detected!"
-  elif ret > 1:
-      result = "multiple face detected!"
-  elif faceRect[0] < 0 or faceRect[1] < 0 or faceRect[2] >= image.shape[1] or faceRect[2] >= image.shape[0]:
-      result = "face is in boundary!"
-  elif livenessScore[0] > 0.5:
-      result = "genuine"
-  else:
-      result = "spoof"
-  
-  status = "ok"
-  response = jsonify({"status": status, "data": {"result": result, "face_rect": {"x": int(faceRect[0]), "y": int(faceRect[1]), "w": int(faceRect[2] - faceRect[0] + 1), "h" : int(faceRect[3] - faceRect[1] + 1)}, "liveness_score": livenessScore[0],
-    "angles": {"yaw": angles[0], "roll": angles[1], "pitch": angles[2]}}})
+# Configuração da documentação e namespaces (Swagger UI em /docs)
+api = Api(
+    app,
+    version="1.0",
+    title="Face Liveness Detection API",
+    description="API oficial para detecção de vivacidade facial em tempo real",
+    doc="/docs"
+)
 
-  response.status_code = 200
-  response.headers["Content-Type"] = "application/json; charset=utf-8"
-  return response
+error_model = api.model(
+    "ErrorResponse",
+    {
+        "status": fields.String(example="error"),
+        "message": fields.String(description="Descrição do erro")
+    }
+)
 
-@app.route('/api/liveness_base64', methods=['POST'])
-def check_liveness_base64():
-  content = request.get_json()
-  imageBase64 = content['image']
-  image = cv2.imdecode(np.frombuffer(base64.b64decode(imageBase64), dtype=np.uint8), cv2.IMREAD_COLOR)
+face_rect_model = api.model(
+    "FaceRect",
+    {
+        "x": fields.Integer(description="Coordenada X do retângulo facial"),
+        "y": fields.Integer(description="Coordenada Y do retângulo facial"),
+        "w": fields.Integer(description="Largura do retângulo facial"),
+        "h": fields.Integer(description="Altura do retângulo facial")
+    }
+)
 
-  faceRect = np.zeros([4], dtype=np.int32)
-  livenessScore = np.zeros([1], dtype=np.double)
-  angles = np.zeros([3], dtype=np.double)
-  ret = ttv_detect_face(image, image.shape[1], image.shape[0], faceRect, livenessScore, angles)
-  if ret == -1:
-      result = "license error!"
-  elif ret == -2:
-      result = "init error!"
-  elif ret == 0:
-      result = "no face detected!"
-  elif ret > 1:
-      result = "multiple face detected!"
-  elif faceRect[0] < 0 or faceRect[1] < 0 or faceRect[2] >= image.shape[1] or faceRect[2] >= image.shape[0]:
-      result = "face is in boundary!"
-  elif livenessScore[0] > 0.5:
-      result = "genuine"
-  else:
-      result = "spoof"
-  
-  status = "ok"
-  response = jsonify({"status": status, "data": {"result": result, "face_rect": {"x": int(faceRect[0]), "y": int(faceRect[1]), "w": int(faceRect[2] - faceRect[0] + 1), "h" : int(faceRect[3] - faceRect[1] + 1)}, "liveness_score": livenessScore[0],
-    "angles": {"yaw": angles[0], "roll": angles[1], "pitch": angles[2]}}})
+angles_model = api.model(
+    "Angles",
+    {
+        "yaw": fields.Float(description="Ângulo de yaw"),
+        "roll": fields.Float(description="Ângulo de roll"),
+        "pitch": fields.Float(description="Ângulo de pitch")
+    }
+)
 
-  response.status_code = 200
-  response.headers["Content-Type"] = "application/json; charset=utf-8"
-  return response
+liveness_data_model = api.model(
+    "LivenessData",
+    {
+        "result": fields.String(description="Classificação do motor de vivacidade"),
+        "face_rect": fields.Nested(face_rect_model),
+        "liveness_score": fields.Float(description="Score bruto de vivacidade"),
+        "angles": fields.Nested(angles_model)
+    }
+)
+
+liveness_response_model = api.model(
+    "LivenessResponse",
+    {
+        "status": fields.String(example="ok"),
+        "data": fields.Nested(liveness_data_model)
+    }
+)
+
+base64_request_model = api.model(
+    "LivenessBase64Request",
+    {
+        "image": fields.String(
+            required=True,
+            description="Imagem codificada em base64 (formatos suportados: JPG, PNG, BMP, TIFF)"
+        )
+    }
+)
+
+liveness_namespace = api.namespace(
+    "liveness",
+    path="/api",
+    description="Operações de detecção de vivacidade facial"
+)
+
+upload_parser = liveness_namespace.parser()
+upload_parser.add_argument(
+    "image",
+    type=FileStorage,
+    location="files",
+    required=True,
+    help="Arquivo de imagem (JPG, PNG, BMP, TIFF)"
+)
+
+@liveness_namespace.route("/liveness")
+class LivenessUploadResource(Resource):
+    """Detecção de vivacidade através de upload de arquivo."""
+
+    @liveness_namespace.expect(upload_parser)
+    @liveness_namespace.response(200, "Resultado da detecção de vivacidade", liveness_response_model)
+    @liveness_namespace.response(400, "Requisição inválida", error_model)
+    def post(self):
+        args = upload_parser.parse_args()
+        uploaded_file = args.get("image")
+
+        if uploaded_file is None:
+            return {"status": "error", "message": "Arquivo de imagem não informado"}, 400
+
+        file_bytes = uploaded_file.read()
+        if not file_bytes:
+            return {"status": "error", "message": "Arquivo de imagem vazio"}, 400
+
+        image_array = np.frombuffer(file_bytes, dtype=np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+        if image is None:
+            return {"status": "error", "message": "Não foi possível decodificar a imagem"}, 400
+
+        return evaluate_liveness(image)
+
+@liveness_namespace.route("/liveness_base64")
+class LivenessBase64Resource(Resource):
+    """Detecção de vivacidade através de payload base64."""
+
+    @liveness_namespace.expect(base64_request_model, validate=True)
+    @liveness_namespace.response(200, "Resultado da detecção de vivacidade", liveness_response_model)
+    @liveness_namespace.response(400, "Requisição inválida", error_model)
+    def post(self):
+        payload = api.payload or {}
+        image_b64 = payload.get("image")
+
+        if not image_b64:
+            return {"status": "error", "message": "Campo 'image' obrigatório"}, 400
+
+        try:
+            image_bytes = base64.b64decode(image_b64, validate=True)
+        except (binascii.Error, ValueError):
+            return {"status": "error", "message": "Payload base64 inválido"}, 400
+
+        if not image_bytes:
+            return {"status": "error", "message": "Imagem vazia após decodificação"}, 400
+
+        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+        if image is None:
+            return {"status": "error", "message": "Não foi possível decodificar a imagem"}, 400
+
+        return evaluate_liveness(image)
+
+@api.route("/health")
+class HealthCheckResource(Resource):
+    """Endpoint de verificação de saúde da aplicação."""
+
+    def get(self):
+        return {
+            "status": "healthy",
+            "service": "Face Liveness Detection API",
+            "version": LIB_VERSION,
+            "mode": "REAL_VALIDATION",
+            "mock_disabled": True,
+            "timestamp": strftime("%Y-%m-%d %H:%M:%S", gmtime()),
+            "endpoints": {
+                "liveness": "/api/liveness",
+                "liveness_base64": "/api/liveness_base64",
+                "documentation": "/docs"
+            },
+            "requirements": {
+                "native_library": "libttvfaceengine7.so",
+                "license_required": True,
+                "models_directory": "facewrapper/dict"
+            }
+        }, 200
 
 
 if __name__ == '__main__':
