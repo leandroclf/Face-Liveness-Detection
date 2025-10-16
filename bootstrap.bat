@@ -58,6 +58,12 @@ if errorlevel 1 (
 echo Ambiente virtual ativado!
 echo.
 
+:: Configurar bibliotecas dinâmicas
+set "LD_LIBRARY_PATH=%cd%\openvino;%cd%\facewrapper\libs;%LD_LIBRARY_PATH%"
+set "PATH=%cd%\openvino;%cd%\facewrapper\libs;%PATH%"
+echo LD_LIBRARY_PATH/PATH configurados para openvino e facewrapper\libs
+echo.
+
 :: Instalar dependências
 echo [5/6] Instalando dependencias...
 echo Instalando pacotes do requirements.txt...

@@ -76,6 +76,10 @@ fi
 log_info "Ambiente virtual ativado!"
 echo
 
+# Configurar bibliotecas dinâmicas
+export LD_LIBRARY_PATH="$(pwd)/openvino:$(pwd)/facewrapper/libs:${LD_LIBRARY_PATH}"
+log_info "LD_LIBRARY_PATH configurado para incluir openvino e facewrapper/libs"
+
 # Instalar dependências
 echo "[5/6] Instalando dependências..."
 log_info "Atualizando pip..."
